@@ -1,0 +1,145 @@
+---
+title: "Vaccine repertoire data information"
+output:
+  html_notebook:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+
+---
+
+```{r, message=F}
+library(tidyverse)
+```
+
+```{r}
+parse_catalog_tags <- function(tags){
+  tag_list <- str_split(unlist(str_split(tags,",")), ":")
+  tags <- sapply(tag_list, function(x) x[1])
+  values <- sapply(tag_list, function(x) x[2])
+  data.frame(tag = tags, value = values) %>% 
+    group_by(tag) %>% 
+    summarise(value = paste(value, collapse = "_"))
+}
+```
+
+
+```{r, message = F}
+df <- read_csv("/labs/khatrilab/solomonb/immune_access/compiled_sample_metadata.csv") 
+```
+
+```{r}
+df_meta <- df %>% 
+  select(project, sample_name, sample_catalog_tags) %>% 
+  drop_na() %>% 
+  mutate(parse_tags = map(sample_catalog_tags, parse_catalog_tags)) %>% 
+  select(-sample_catalog_tags) %>% 
+  unnest(parse_tags) %>% 
+  pivot_wider(names_from = "tag", values_from = "value")
+df_meta
+```
+
+
+# Background
+
+# Samples
+
+### SARS-CoV-2
+
+- SARS-CoV-2 vaccine - 122 subjects pre- and post-vaccination - 51 - Swanson
+- SARS-CoV-2 vaccine 
+  - Before and after vaccination in 10 COVID-19 convalescent patients and 4 SARS-CoV-2 naïve healthy donor vaccine recipients
+  - 107 total samples
+  - https://www.sciencedirect.com/science/article/pii/S2352396422002298?via%3Dihub
+    - 4 Healthy vaccine recipients (VRs)
+      - VR8 had two Pfizer-BioNTech (BNT162b2) vaccinations prior to boost and VR10 had two Moderna (mRNA-1273) vaccinations prior to boost
+    - 10 COVID-19 convalescent patients (CCPs)
+      -  Pfizer-BioNTech (BNT162b2; n = 8) or Moderna (mRNA-1273; n = 2)
+      - CCP2 has well controlled HIV on antiretroviral therapy
+      - Post-COVID samples were obtained from CCPs a median of 101 days after COVID-19 diagnosis 
+      - Post vaccine samples were taken from CCPs and VRs a median of 72 days after the second dose of the vaccine
+      - CCP6 and CCP11 were sampled immediately prior to vaccination
+      - CCP6, CCP11, and CCP16 were sampled both early post vaccination (day +14) and late post vaccination (day +241, +227, and +161, respectively)
+    
+  - Project ID: `dykema-2022-ebiomed`
+  - Data ID: `4ae9ad1c-de36-4acf-80ce-9e799d79abe0`
+  
+```{r, message=F}
+read_tsv("/labs/khatrilab/solomonb/immune_access/data/4ae9ad1c-de36-4acf-80ce-9e799d79abe0/samples.tsv") %>% 
+  select(sample_name, sample_tags) %>% 
+  separate(sample_name, into = c("name1", "name3", "name4"), sep = "_", remove = F) %>% 
+  mutate(name2 = str_extract(name1, "Pre|Post"), name1 = gsub("Pre|Post","",name1)) %>% 
+  select(sample_name, contains("name"), sample_tags)
+```
+  - 
+    - `name1` only contains: `CCP6, VR10, VR14, VR8`, seems to be missing samples?
+    - Not sure what `name3` represents: `117, 146, 229ES, COV2S, HIV, NL63S, NP, OC43S`
+
+
+
+- SARS-CoV-2 vaccine - 
+  - 20 Ad26.COV2.S vaccinated individuals, 5 placebo, 8 convalescent
+  - Vx and placebo collected at d63
+  - TCRb
+  - https://www.nature.com/articles/s41586-021-03681-2
+  - Project ID: `alter-2021-n`
+  - Data ID: `322a46d5-7ed3-4749-9799-f0df1fe6d0a`
+  
+```{r, message=F}
+read_tsv("/labs/khatrilab/solomonb/immune_access/data/322a46d5-7ed3-4749-9799-f0df1fe6d0a/samples.tsv")
+```
+
+### Influenza  
+  
+- Influenza vaccine - 40 individuals pre- and post-vaccination
+  - cTfh - circulating CD4 cells similar to Tfhs. Identified population of ICOS+CD38+ cTfh, strongly induced by inflz, included hemagglutinin-tetramer+. Found vaccine response persists in the ICOS-CD38- cTfh population 
+  - 102 samples
+  - https://doi.org/10.1126/sciimmunol.aag2152
+  - Project ID: `herati-2017-sciimmunol`
+  - Data ID: `3a2ffef9-9bf6-486f-aa68-fa8c92893c5e`
+```{r, message=F}
+df <- read_tsv("/labs/khatrilab/solomonb/immune_access/data/3a2ffef9-9bf6-486f-aa68-fa8c92893c5e/samples.tsv") %>% 
+  select(sample_name, sample_catalog_tags, sample_tags) %>% 
+  mutate(parse_tags = map(sample_catalog_tags, parse_catalog_tags)) %>% 
+  select(-sample_catalog_tags, -sample_tags) %>% 
+  unnest(parse_tags) %>% 
+  pivot_wider(names_from = "tag", values_from = "value") %>% 
+  mutate(day = str_extract(sample_name, "Day[0-9]*")) %>% 
+  separate(sample_name, into = c("subject_from_name"), extra = "drop", remove = F) %>% 
+  mutate(markers = paste(`Cluster of Differentiation (CD)`, `Other Cell Marker`, `G Protein Coupled Receptor`, sep = "_"))
+df
+```
+```{r}
+print("###Subjects"); table(df$`Subject`)
+print("###Subjects"); table(df$subject_from_name)
+print("###Tissue"); table(df$`Tissue Source`)
+print("###Marker"); table(df$markers)
+```
+```{r}
+table(df$`Subject`, df$markers)
+```
+
+### Yellow fever
+
+- Yellow fever vaccine 
+  - 9 individuals pre- and post-vaccination 
+  - PBMCs, memory T cells, activated effector T cells, effector memory T cells
+  - Project ID: `dewitt-2015-jvi`
+  - Data ID: `4b7dded9-9692-428c-9c3d-23239ddd9153`
+  
+```{r, message=F}
+df <- read_tsv("/labs/khatrilab/solomonb/immune_access/data/4b7dded9-9692-428c-9c3d-23239ddd9153/samples.tsv") %>% 
+  select(sample_name, sample_catalog_tags) %>% 
+  mutate(parse_tags = map(sample_catalog_tags, parse_catalog_tags)) %>% 
+  select(-sample_catalog_tags) %>% 
+  unnest(parse_tags) %>% 
+  pivot_wider(names_from = "tag", values_from = "value")
+df  
+```
+
+```{r}
+table(df$Subject, df$`Time Point`, df$`Tissue Source`)
+```
+
+
+

@@ -1,0 +1,206 @@
+---
+title: "Yellow fever method comparison"
+output: 
+  html_notebook:
+    toc: True
+    toc_depth: 3
+    toc_float: True
+---
+
+# Import data
+```{r}
+filepath <-   "/labs/khatrilab/solomonb/immune_access/data/4b7dded9-9692-428c-9c3d-23239ddd9153"
+
+yellow_fever_cdr3 <- tibble(file = list.files(filepath, full.names = T)) %>%
+  filter(grepl("PBMC", file)) %>%
+  mutate(data = map(file, function(x) {
+    suppressMessages(vroom::vroom(
+      x,
+      # Specify columns to keep
+      col_select = c("amino_acid", "templates", "frame_type", "v_resolved", "j_resolved")
+    )) %>%
+      # Keep only inframe sequences
+      filter(frame_type == "In")
+      # dplyr::select(-v_resolved) %>%
+      # Combine counts for CDR3 after dropping TRV allele
+      # group_by(amino_acid) %>%
+      # summarise(templates = sum(templates))
+  })) %>%
+  mutate(file = tools::file_path_sans_ext(basename(file))) %>%
+  separate(file, into = c(NA, "subject", "vaccine_day"), sep = " ") %>%
+  mutate(vaccine_day = sprintf("d%s", vaccine_day)) %>%
+  mutate(subject = gsub("\\_.*", "", subject)) %>%
+  unnest(data)
+```
+
+```{r}
+set.seed(1234)
+yellow_sample <- yellow_fever_cdr3 %>% 
+  unite("sample", subject, vaccine_day, sep = "_") %>% 
+  group_by(sample, amino_acid) %>% 
+  summarise(templates = sum(templates)) %>% 
+  ungroup() %>% 
+  slice_sample(n = 1000) 
+yellow_sample
+```
+
+# GLIPH2 - original
+
+- http://50.255.35.37:8080/
+
+### Helper functions
+```{r}
+# Creates the GLIPH config file 
+create_gliph_config <- function(
+    directory_path = ".",
+    out_prefix,
+    cdr3_file,
+    refer_file="ref_CD4.txt",
+    v_usage_freq_file="ref_V_CD4.txt",
+    cdr3_length_freq_file="ref_L_CD4.txt",
+    local_min_pvalue=0.001,
+    p_depth = 1000,
+    global_convergence_cutoff = 1,
+    simulation_depth=1000,
+    kmer_min_depth=3,
+    local_min_OVE=10,
+    algorithm="GLIPH2",
+    all_aa_interchangeable=1
+    ){
+  all_args <- c(as.list(environment()))
+  all_args <- all_args[names(all_args) != "directory_path"]
+  all_args <- sprintf("%s=%s",names(all_args),all_args)
+  
+  message_header <- sprintf("##### Written to %s/gliph.cfg #####", normalizePath(directory_path))
+  message(paste(c(message_header, all_args), collapse = "\n"))
+  
+  file_path <- sprintf("%s/gliph.cfg", directory_path)
+  readr::write_lines(all_args, file = file_path)
+}
+
+# create_gliph_config(out_prefix = "YF", cdr3_file = "YF_tcr_test.tsv")
+```
+
+
+```{r}
+# Creates a slurm script to run GLIPH
+# Note GPU partition since kluster nodes are not the right distro
+create_gliph_slurm_script <- function(
+    directory_path = ".",
+    job_name,
+    nodes=1,
+    ntasks=1,
+    cpus_per_task,
+    mem,
+    nodelist = NULL
+    ){
+  slurm_header <- c(
+    "#!/bin/sh",
+    "#SBATCH --mail-type=END,FAIL",
+    "#SBATCH --mail-user=solomonb@stanford.edu",
+    "#SBATCH --time=13-23:05 # Runtime in D-HH:MM",
+    sprintf("#SBATCH --job-name=%s",job_name),
+    sprintf("#SBATCH --nodes=%s", nodes),
+    sprintf("#SBATCH --ntasks=%s", ntasks),
+    sprintf("#SBATCH --cpus-per-task=%s", cpus_per_task),
+    sprintf("#SBATCH --mem=%s", mem),
+    sprintf("#SBATCH --nodelist=%s", nodelist),
+    "#SBATCH --partition=khatrilab-gpu",
+    "#SBATCH --error=./%x.err",
+    "#SBATCH --output=./%x.out"
+  )
+  slurm_script <- c(
+    sprintf("%s/irtools.centos -c %s/gliph.cfg", 
+            normalizePath(directory_path), 
+            normalizePath(directory_path))
+  )
+  slurm_all <- c(slurm_header, "", slurm_script)
+  
+  message_header <- sprintf("##### Written to %s/%s.sh #####", normalizePath(directory_path), job_name)
+  message(paste(c(message_header, slurm_all), collapse = "\n"))
+  
+  file_path <- sprintf("%s/%s.sh", directory_path, job_name)
+  readr::write_lines(slurm_all, file = file_path)
+  system(sprintf("chmod +x %s", file_path)) # Make executable
+}
+
+# create_gliph_slurm_script(directory_path = "gliph_yf", job_name = "test_2")
+```
+
+### Make GLIPH format and files
+
+```{r}
+read_tsv("../gliph2/imrep/imrep_tcr.tsv", col_names = F, n_max = 10)
+```
+
+```{r}
+yellow_sample %>% 
+  group_by(sample, amino_acid) %>% 
+  summarise(templates = sum(templates)) %>% 
+  mutate(TRBV = "TRBV", TRBJ = "TRBJ", CDR3a = NA) %>% 
+  select(CDR3b = amino_acid, TRBV, TRBJ, CDR3a, sample, count = templates) %>% 
+  {print(.);.} %>% 
+  write_tsv("gliph_yf/yf_sample_tcr.tsv", col_names = F)
+```
+```{r}
+yellow_fever_cdr3 %>% 
+  unite("sample", subject, vaccine_day, sep = "_") %>% 
+  group_by(sample, amino_acid) %>% 
+  summarise(templates = sum(templates)) %>% 
+  ungroup() %>% 
+  group_by(sample, amino_acid) %>% 
+  summarise(templates = sum(templates)) %>% 
+  mutate(TRBV = "TRBV", TRBJ = "TRBJ", CDR3a = NA) %>% 
+  select(CDR3b = amino_acid, TRBV, TRBJ, CDR3a, sample, count = templates) %>% 
+  {print(.);.} %>% 
+  write_tsv("gliph_yf/yf_tcr.tsv", col_names = F)
+```
+
+```{r}
+# create_gliph_config(directory_path = "./gliph_yf", out_prefix = "YF", cdr3_file = "yf_sample_tcr.tsv")
+create_gliph_config(directory_path = "./gliph_yf", out_prefix = "YF", cdr3_file = "yf_tcr.tsv")
+```
+```{r}
+create_gliph_slurm_script(directory_path = "./gliph_yf", job_name = "yf_gliph", cpus_per_task = 1, mem = "50G")
+```
+### Run GLIPH
+```{bash, eval = F}
+sbatch /labs/khatrilab/solomonb/vaccine_repertoire/gliph_yf/yf_gliph.sh
+```
+
+### Read GLIPH data
+
+```{r}
+read_csv("/labs/khatrilab/solomonb/vaccine_repertoire/gliph_yf/YF_cluster.csv")
+```
+
+```{r}
+df_reduced <- yellow_sample %>% 
+  left_join(read_csv("/labs/khatrilab/solomonb/vaccine_repertoire/gliph_yf/YF_cluster.csv"),
+            by = c("amino_acid" = "TcRb")) %>% 
+  group_by(sample, index) %>% 
+  summarise(templates = sum(templates)) %>% 
+  drop_na() %>% 
+  pivot_wider(names_from = "index", values_from = "templates", values_fill = 0) %>% 
+  column_to_rownames("sample")
+df_reduced
+```
+
+```{r}
+1- vegan::vegdist(df_reduced, method = "horn")
+```
+```{r}
+umap::umap(df_reduced)
+```
+
+
+
+# GLIPH2 - turboGLIPH
+
+- https://github.com/HetzDra/turboGliph
+
+
+# TCRdist
+
+- https://svalkiers.github.io/clusTCR/
+
